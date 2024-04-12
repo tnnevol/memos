@@ -1,19 +1,18 @@
 import classNames from "classnames";
+import type Codemirror from "codemirror";
 import Fuse from "fuse.js";
-import { useEffect, useRef, useState } from "react";
-import getCaretCoordinates from "textarea-caret";
+import { debounce } from "lodash-es";
+import { useRef, useState, useEffect } from "react";
 import OverflowTip from "@/components/kit/OverflowTip";
 import { useTagStore } from "@/store/module";
-import { EditorRefActions } from ".";
 
 type Props = {
-  editorRef: React.RefObject<HTMLTextAreaElement>;
-  editorActions: React.ForwardedRef<EditorRefActions>;
+  editor: Codemirror.Editor | null;
 };
 
-type Position = { left: number; top: number; height: number };
+type Position = { left: number; top: number; bottom: number };
 
-const TagSuggestions = ({ editorRef, editorActions }: Props) => {
+const TagSuggestions = ({ editor }: Props) => {
   const [position, setPosition] = useState<Position | null>(null);
   const hide = () => setPosition(null);
 
@@ -21,17 +20,17 @@ const TagSuggestions = ({ editorRef, editorActions }: Props) => {
   const tagsRef = useRef(state.tags);
   tagsRef.current = state.tags;
 
-  const [selected, select] = useState(0);
+  const [selected, setSelected] = useState(0);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
 
-  const getCurrentWord = (): [word: string, startIndex: number] => {
-    const editor = editorRef.current;
-    if (!editor) return ["", 0];
-    const cursorPos = editor.selectionEnd;
-    const before = editor.value.slice(0, cursorPos).match(/\S*$/) || { 0: "", index: cursorPos };
-    const after = editor.value.slice(cursorPos).match(/^\S*/) || { 0: "" };
-    return [before[0] + after[0], before.index ?? cursorPos];
+  const getCurrentWord = (): [word: string] => {
+    if (!editor) return [""];
+    const position = editor.getCursor();
+    const lineContent = editor.getLine(position.line);
+    const before = lineContent.slice(0, position.ch).match(/\S*$/) || { 0: "", index: position.ch };
+    const after = lineContent.slice(position.ch).match(/^\S*/) || { 0: "" };
+    return [before[0] + after[0]];
   };
 
   const suggestionsRef = useRef<string[]>([]);
@@ -45,25 +44,29 @@ const TagSuggestions = ({ editorRef, editorActions }: Props) => {
   isVisibleRef.current = !!(position && suggestionsRef.current.length > 0);
 
   const autocomplete = (tag: string) => {
-    if (!editorActions || !("current" in editorActions) || !editorActions.current) return;
-    const [word, index] = getCurrentWord();
-    editorActions.current.removeText(index, word.length);
-    editorActions.current.insertText(`#${tag}`);
+    if (!editor) return;
+    const [word] = getCurrentWord();
+    const toPosition = editor.getCursor();
+    const fromPosition = {
+      ...toPosition,
+      ch: toPosition.ch - word.length,
+    };
+    editor.replaceRange(`#${tag}`, fromPosition, toPosition);
     hide();
   };
 
-  const handleKeyDown = (e: KeyboardEvent) => {
+  const handleKeyDown = (instance: Codemirror.Editor, e: KeyboardEvent) => {
     if (!isVisibleRef.current) return;
     const suggestions = suggestionsRef.current;
     const selected = selectedRef.current;
     if (["Escape", "ArrowLeft", "ArrowRight"].includes(e.code)) hide();
     if ("ArrowDown" === e.code) {
-      select((selected + 1) % suggestions.length);
+      setSelected((selected + 1) % suggestions.length);
       e.preventDefault();
       e.stopPropagation();
     }
     if ("ArrowUp" === e.code) {
-      select((selected - 1 + suggestions.length) % suggestions.length);
+      setSelected((selected - 1 + suggestions.length) % suggestions.length);
       e.preventDefault();
       e.stopPropagation();
     }
@@ -73,38 +76,38 @@ const TagSuggestions = ({ editorRef, editorActions }: Props) => {
       e.stopPropagation();
     }
   };
-
-  const handleInput = () => {
-    const editor = editorRef.current;
-    if (!editor) return;
-
-    select(0);
-    const [word, index] = getCurrentWord();
-    const currentChar = editor.value[editor.selectionEnd];
+  const handleInput = (instance: Codemirror.Editor) => {
+    setSelected(0);
+    const [word] = getCurrentWord();
+    const position = instance?.getCursor();
+    const line = instance?.getLine(position.line);
+    const currentChar = line[position.ch + 1];
     const isActive = word.startsWith("#") && currentChar !== "#";
-
-    const caretCordinates = getCaretCoordinates(editor, index);
-    caretCordinates.top -= editor.scrollTop;
-    isActive ? setPosition(caretCordinates) : hide();
+    const cursorCoords = instance.cursorCoords(instance.getCursor(), "local");
+    const scrollInfo = instance.getScrollInfo();
+    isActive
+      ? setPosition({
+          ...cursorCoords,
+          top: cursorCoords.top - scrollInfo.top + 60,
+        })
+      : hide();
   };
 
   const listenersAreRegisteredRef = useRef(false);
   const registerListeners = () => {
-    const editor = editorRef.current;
     if (!editor || listenersAreRegisteredRef.current) return;
-    editor.addEventListener("click", hide);
-    editor.addEventListener("blur", hide);
-    editor.addEventListener("keydown", handleKeyDown);
-    editor.addEventListener("input", handleInput);
+    editor.on("blur", hide);
+    editor.on("keydown", handleKeyDown);
+    editor.on("inputRead", debounce(handleInput, 300));
     listenersAreRegisteredRef.current = true;
   };
-  useEffect(registerListeners, [!!editorRef.current]);
+  useEffect(registerListeners, [!!editor]);
 
   if (!isVisibleRef.current || !position) return null;
   return (
     <div
       className="z-20 p-1 mt-1 -ml-2 absolute max-w-[12rem] gap-px rounded font-mono flex flex-col justify-start items-start overflow-auto shadow bg-zinc-100 dark:bg-zinc-700"
-      style={{ left: position.left, top: position.top + position.height }}
+      style={{ left: position.left, top: position.top }}
     >
       {suggestionsRef.current.map((tag, i) => (
         <div

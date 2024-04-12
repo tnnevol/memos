@@ -26,9 +26,7 @@ const AddMemoRelationButton = (props: Props) => {
             toast.error("Failed to embed memo");
             return;
           }
-
-          const cursorPosition = editorRef.current.getCursorPosition();
-          const prevValue = editorRef.current.getContent().slice(0, cursorPosition);
+          const prevValue = editorRef.current.getCursorBeforeContent();
           if (prevValue !== "" && !prevValue.endsWith("\n")) {
             editorRef.current.insertText("\n");
           }
@@ -38,7 +36,7 @@ const AddMemoRelationButton = (props: Props) => {
           setTimeout(() => {
             editorRef.current?.scrollToCursor();
             editorRef.current?.focus();
-          });
+          }, 300);
           return;
         }
 

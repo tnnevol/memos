@@ -4,8 +4,7 @@ import { toast } from "react-hot-toast";
 import { useTranslation } from "react-i18next";
 import useLocalStorage from "react-use/lib/useLocalStorage";
 import { memoServiceClient } from "@/grpcweb";
-import { TAB_SPACE_WIDTH, UNKNOWN_ID } from "@/helpers/consts";
-import { isValidUrl } from "@/helpers/utils";
+import { UNKNOWN_ID } from "@/helpers/consts";
 import useCurrentUser from "@/hooks/useCurrentUser";
 import { useGlobalStore, useResourceStore, useTagStore } from "@/store/module";
 import { useMemoStore, useUserStore } from "@/store/v1";
@@ -15,6 +14,7 @@ import { Resource } from "@/types/proto/api/v2/resource_service";
 import { UserSetting } from "@/types/proto/api/v2/user_service";
 import { useTranslate } from "@/utils/i18n";
 import { convertVisibilityFromString, convertVisibilityToString } from "@/utils/memo";
+import { getResourceUrl } from "@/utils/resource";
 import { extractTagsFromContent } from "@/utils/tag";
 import showCreateResourceDialog from "../CreateResourceDialog";
 import Icon from "../Icon";
@@ -25,7 +25,6 @@ import TagSelector from "./ActionButton/TagSelector";
 import Editor, { EditorRefActions } from "./Editor";
 import RelationListView from "./RelationListView";
 import ResourceListView from "./ResourceListView";
-import { handleEditorKeydownWithMarkdownShortcuts, hyperlinkHighlightedText } from "./handlers";
 import { MemoEditorContext } from "./types";
 
 interface Props {
@@ -79,6 +78,7 @@ const MemoEditor = (props: Props) => {
       )
     : state.relationList.filter((relation) => relation.type === MemoRelation_Type.REFERENCE);
 
+  // 初始化缓存内容
   useEffect(() => {
     editorRef.current?.setContent(contentCache || "");
   }, []);
@@ -144,19 +144,6 @@ const MemoEditor = (props: Props) => {
         handleSaveBtnClick();
         return;
       }
-
-      handleEditorKeydownWithMarkdownShortcuts(event, editorRef.current);
-    }
-    if (event.key === "Tab" && !state.isComposing) {
-      event.preventDefault();
-      const tabSpace = " ".repeat(TAB_SPACE_WIDTH);
-      const cursorPosition = editorRef.current.getCursorPosition();
-      const selectedContent = editorRef.current.getSelectedContent();
-      editorRef.current.insertText(tabSpace);
-      if (selectedContent) {
-        editorRef.current.setCursorPosition(cursorPosition + TAB_SPACE_WIDTH);
-      }
-      return;
     }
   };
 
@@ -249,18 +236,24 @@ const MemoEditor = (props: Props) => {
     }
   };
 
-  const handlePasteEvent = async (event: React.ClipboardEvent) => {
-    if (event.clipboardData && event.clipboardData.files.length > 0) {
-      event.preventDefault();
-      await uploadMultiFiles(event.clipboardData.files);
-    } else if (
-      editorRef.current != null &&
-      editorRef.current.getSelectedContent().length != 0 &&
-      isValidUrl(event.clipboardData.getData("Text"))
-    ) {
-      event.preventDefault();
-      hyperlinkHighlightedText(editorRef.current, event.clipboardData.getData("Text"));
+  const handleUploadImages = async (files: File[]) => {
+    const uploadedResourceList: Resource[] = [];
+    for (const file of files) {
+      const resource = await handleUploadResource(file);
+      if (resource) {
+        uploadedResourceList.push(resource);
+        if (memoId) {
+          await resourceStore.updateResource({
+            resource: Resource.fromPartial({
+              id: resource.id,
+              memoId,
+            }),
+            updateMask: ["memo_id"],
+          });
+        }
+      }
     }
+    return uploadedResourceList.map((resource) => ({ url: getResourceUrl(resource, false) }));
   };
 
   const handleContentChange = (content: string) => {
@@ -370,7 +363,7 @@ const MemoEditor = (props: Props) => {
       initialContent: "",
       placeholder: t("editor.placeholder"),
       onContentChange: handleContentChange,
-      onPaste: handlePasteEvent,
+      uploadImages: handleUploadImages,
     }),
     [i18n.language],
   );

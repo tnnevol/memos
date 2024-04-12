@@ -1,5 +1,6 @@
 import { Dropdown, IconButton, Menu, MenuButton, MenuItem } from "@mui/joy";
 import { Link } from "@mui/joy";
+import type React from "react";
 import toast from "react-hot-toast";
 import Icon from "@/components/Icon";
 import showPreviewMarkdownDialog from "@/components/PreviewMarkdownDialog";
@@ -16,9 +17,7 @@ const MarkdownMenu = (props: Props) => {
     if (!editorRef.current) {
       return;
     }
-
-    const cursorPosition = editorRef.current.getCursorPosition();
-    const prevValue = editorRef.current.getContent().slice(0, cursorPosition);
+    const prevValue = editorRef.current.getCursorBeforeContent();
     if (prevValue === "" || prevValue.endsWith("\n")) {
       editorRef.current.insertText("", "```\n", "\n```");
     } else {
@@ -27,7 +26,7 @@ const MarkdownMenu = (props: Props) => {
     setTimeout(() => {
       editorRef.current?.scrollToCursor();
       editorRef.current?.focus();
-    });
+    }, 300);
   };
 
   const handleCheckboxClick = () => {
@@ -36,12 +35,11 @@ const MarkdownMenu = (props: Props) => {
     }
 
     const currentPosition = editorRef.current.getCursorPosition();
-    const currentLineNumber = editorRef.current.getCursorLineNumber();
-    const currentLine = editorRef.current.getLine(currentLineNumber);
-    let newLine = "";
-    let cursorChange = 0;
-    if (/^- \[( |x|X)\] /.test(currentLine)) {
-      newLine = currentLine.replace(/^- \[( |x|X)\] /, "");
+    const currentLine = editorRef.current.getLine(currentPosition.line);
+    let newLine: string;
+    let cursorChange: number;
+    if (/^- \[([ xX])] /.test(currentLine)) {
+      newLine = currentLine.replace(/^- \[([ xX])] /, "");
       cursorChange = -6;
     } else if (/^\d+\. |- /.test(currentLine)) {
       const match = currentLine.match(/^\d+\. |- /) ?? [""];
@@ -51,12 +49,15 @@ const MarkdownMenu = (props: Props) => {
       newLine = "- [ ] " + currentLine;
       cursorChange = 6;
     }
-    editorRef.current.setLine(currentLineNumber, newLine);
-    editorRef.current.setCursorPosition(currentPosition + cursorChange);
+    editorRef.current.setLine(currentPosition.line, newLine);
+    editorRef.current.setCursorPosition({
+      ...currentPosition,
+      ch: currentPosition.ch + cursorChange,
+    });
     setTimeout(() => {
       editorRef.current?.scrollToCursor();
       editorRef.current?.focus();
-    });
+    }, 300);
   };
 
   const handlePreviewClick = () => {

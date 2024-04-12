@@ -1,165 +1,191 @@
+import frontmatter from "@bytemd/plugin-frontmatter";
+import gfm from "@bytemd/plugin-gfm";
+import highlight from "@bytemd/plugin-highlight";
+import { BytemdPlugin, EditorProps } from "bytemd";
 import classNames from "classnames";
-import { forwardRef, ReactNode, useCallback, useEffect, useImperativeHandle, useRef } from "react";
+import Codemirror, { Position } from "codemirror";
+import xml from "highlight.js/lib/languages/xml";
+import juejinMarkdownThemes from "juejin-markdown-themes";
+import React, { forwardRef, useEffect, useImperativeHandle, useState } from "react";
+import BytemdEditor, { BytemdEditorProps } from "./BytemdEditor";
 import TagSuggestions from "./TagSuggestions";
 
 export interface EditorRefActions {
   focus: FunctionType;
   scrollToCursor: FunctionType;
   insertText: (text: string, prefix?: string, suffix?: string) => void;
-  removeText: (start: number, length: number) => void;
+  removeText: (fromPosition: Codemirror.Position, toPosition: Codemirror.Position) => void;
+  replaceRange: (replacement: string | string[], from: Codemirror.Position, to?: Codemirror.Position) => void;
   setContent: (text: string) => void;
   getContent: () => string;
   getSelectedContent: () => string;
-  getCursorPosition: () => number;
-  setCursorPosition: (startPos: number, endPos?: number) => void;
+  getCursorPosition: (start?: "from" | "to") => Codemirror.Position;
+  setCursorPosition: (anchor: Codemirror.Position, head?: Codemirror.Position) => void;
   getCursorLineNumber: () => number;
   getLine: (lineNumber: number) => string;
   setLine: (lineNumber: number, text: string) => void;
+  // 获取光标之前的内容
+  getCursorBeforeContent: () => string;
 }
 
-interface Props {
+interface Props extends Pick<EditorProps, "uploadImages"> {
   className: string;
   initialContent: string;
   placeholder: string;
-  tools?: ReactNode;
+  tools?: React.ReactNode;
   onContentChange: (content: string) => void;
-  onPaste: (event: React.ClipboardEvent) => void;
 }
-
 const Editor = forwardRef(function Editor(props: Props, ref: React.ForwardedRef<EditorRefActions>) {
-  const { className, initialContent, placeholder, onPaste, onContentChange: handleContentChangeCallback } = props;
-  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const { className, initialContent, placeholder, uploadImages, onContentChange } = props;
+  // 编辑器的真实内容
+  const [realContent, setRealContent] = useState<string>("");
+  const [editor, setEditor] = useState<Codemirror.Editor | null>(null);
+  const plugins: BytemdPlugin[] = [
+    gfm(),
+    highlight({
+      init(hljs) {
+        // You can register additional languages
+        hljs.registerLanguage("vue", xml);
+      },
+    }),
+    frontmatter(),
+    // 支持皮肤
+    {
+      viewerEffect({ file }) {
+        // mk-cute nicoz-blue channing-cyan awesome-green
+        const $style = document.createElement("style");
+        // const $link = document.createElement("link");
+        const frontmatter = file.frontmatter as any;
+        const theme = frontmatter?.theme ?? "qklhk-chocolate";
+        // const highlight = frontmatter?.highlight ?? "github";
+        // $link.rel = "stylesheet";
+        // $link.href = `https://unpkg.com/@highlightjs/cdn-assets@11.9.0/styles/${highlight}.min.css`;
+        $style.innerHTML = juejinMarkdownThemes[theme]?.style;
+        document.head.appendChild($style);
+        // document.head.appendChild($link);
+        return () => {
+          $style.remove();
+          // $link.remove();
+        };
+      },
+    },
+    // 获取 codemirror 实例
+    {
+      editorEffect(ctx) {
+        setEditor(ctx.editor);
+        // console.log(editor?.replaceRange);
+        // codemirror editor instance
+        ctx.editor.on("blur", () => {});
+        return () => {
+          // ctx.editor.off('event', ...)
+        };
+      },
+    },
+  ];
 
   useEffect(() => {
-    if (editorRef.current && initialContent) {
-      editorRef.current.value = initialContent;
-      handleContentChangeCallback(initialContent);
+    if (initialContent) {
+      setRealContent(initialContent);
     }
   }, []);
-
-  useEffect(() => {
-    if (editorRef.current) {
-      updateEditorHeight();
-    }
-  }, [editorRef.current?.value]);
-
-  const updateEditorHeight = () => {
-    if (editorRef.current) {
-      editorRef.current.style.height = "auto";
-      editorRef.current.style.height = (editorRef.current.scrollHeight ?? 0) + "px";
-    }
-  };
 
   useImperativeHandle(
     ref,
     () => ({
-      focus: () => {
-        editorRef.current?.focus();
+      setCursorPosition(anchor: Codemirror.Position, head?: Codemirror.Position) {
+        if (!editor) return;
+        editor.setSelection(anchor, head);
       },
-      scrollToCursor: () => {
-        if (editorRef.current) {
-          editorRef.current.scrollTop = editorRef.current.scrollHeight;
-        }
+      setLine(lineNumber: number, text: string) {
+        if (!editor) return;
+        const line = editor.getLine(lineNumber);
+        editor.replaceRange(
+          text,
+          {
+            line: lineNumber,
+            ch: 0,
+          },
+          { line: lineNumber, ch: line.length },
+        );
       },
-      insertText: (content = "", prefix = "", suffix = "") => {
-        if (!editorRef.current) {
-          return;
-        }
+      setContent(content) {
+        setRealContent(content);
+      },
+      // 从光标的位置插入文本
+      insertText(content = "", prefix = "", suffix = "") {
+        if (!editor) return;
+        const position = editor.getCursor();
+        position && editor.replaceRange(prefix + content + suffix, position);
+      },
+      replaceRange(replacement: string | string[], from: Codemirror.Position, to?: Codemirror.Position) {
+        if (!editor) return;
+        editor.replaceRange(replacement, from, to);
+      },
+      removeText(fromPosition: Codemirror.Position, toPosition: Codemirror.Position) {
+        if (!editor) return;
+        editor.replaceRange("", fromPosition, toPosition);
+      },
+      scrollToCursor() {
+        if (!editor) return;
+        const position = editor.getCursor();
+        editor.scrollIntoView(position);
+      },
+      focus() {
+        editor?.focus();
+      },
 
-        const cursorPosition = editorRef.current.selectionStart;
-        const endPosition = editorRef.current.selectionEnd;
-        const prevValue = editorRef.current.value;
-        const value =
-          prevValue.slice(0, cursorPosition) +
-          prefix +
-          (content || prevValue.slice(cursorPosition, endPosition)) +
-          suffix +
-          prevValue.slice(endPosition);
-
-        editorRef.current.value = value;
-        editorRef.current.focus();
-        editorRef.current.selectionEnd = endPosition + prefix.length + content.length;
-        handleContentChangeCallback(editorRef.current.value);
-        updateEditorHeight();
+      getContent() {
+        // console.log("getContent", realContent);
+        return realContent ?? "";
       },
-      removeText: (start: number, length: number) => {
-        if (!editorRef.current) {
-          return;
-        }
-
-        const prevValue = editorRef.current.value;
-        const value = prevValue.slice(0, start) + prevValue.slice(start + length);
-        editorRef.current.value = value;
-        editorRef.current.focus();
-        editorRef.current.selectionEnd = start;
-        handleContentChangeCallback(editorRef.current.value);
-        updateEditorHeight();
+      getSelectedContent() {
+        return editor?.getSelection() ?? "";
       },
-      setContent: (text: string) => {
-        if (editorRef.current) {
-          editorRef.current.value = text;
-          handleContentChangeCallback(editorRef.current.value);
-          updateEditorHeight();
-        }
+      getCursorPosition() {
+        if (!editor) return { line: 0, ch: 0 };
+        return editor.getCursor();
       },
-      getContent: (): string => {
-        return editorRef.current?.value ?? "";
+      getCursorLineNumber() {
+        if (!editor) return 0;
+        const position = editor.getCursor();
+        return position.line ?? 0;
       },
-      getCursorPosition: (): number => {
-        return editorRef.current?.selectionStart ?? 0;
+      getLine(lineNumber: number) {
+        if (!editor) return "";
+        return editor.getLine(lineNumber);
       },
-      getSelectedContent: () => {
-        const start = editorRef.current?.selectionStart;
-        const end = editorRef.current?.selectionEnd;
-        return editorRef.current?.value.slice(start, end) ?? "";
-      },
-      setCursorPosition: (startPos: number, endPos?: number) => {
-        const _endPos = isNaN(endPos as number) ? startPos : (endPos as number);
-        editorRef.current?.setSelectionRange(startPos, _endPos);
-      },
-      getCursorLineNumber: () => {
-        const cursorPosition = editorRef.current?.selectionStart ?? 0;
-        const lines = editorRef.current?.value.slice(0, cursorPosition).split("\n") ?? [];
-        return lines.length - 1;
-      },
-      getLine: (lineNumber: number) => {
-        return editorRef.current?.value.split("\n")[lineNumber] ?? "";
-      },
-      setLine: (lineNumber: number, text: string) => {
-        const lines = editorRef.current?.value.split("\n") ?? [];
-        lines[lineNumber] = text;
-        if (editorRef.current) {
-          editorRef.current.value = lines.join("\n");
-          editorRef.current.focus();
-          handleContentChangeCallback(editorRef.current.value);
-          updateEditorHeight();
-        }
+      getCursorBeforeContent() {
+        if (!editor) return "";
+        const lines = realContent.split("\n");
+        const position = editor.getCursor();
+        return lines.slice(0, position.line).join("\n") + "\n" + lines[position.line].slice(0, position.ch);
       },
     }),
-    [],
+    [realContent, !!editor],
   );
 
-  const handleEditorInput = useCallback(() => {
-    handleContentChangeCallback(editorRef.current?.value ?? "");
-    updateEditorHeight();
-  }, []);
+  const handleEditorInput = (content: string) => {
+    setRealContent(content);
+    onContentChange(content);
+    // console.log("handleEditorInput realContent", realContent);
+  };
+
+  const editConfig: BytemdEditorProps = {
+    placeholder,
+    value: realContent,
+    plugins,
+    mode: "auto",
+    editorConfig: {
+      theme: "3024-night",
+    },
+    onChange: handleEditorInput,
+    uploadImages: uploadImages,
+  };
 
   return (
-    <div
-      className={classNames(
-        "flex flex-col justify-start items-start relative w-full h-auto max-h-[256px] bg-inherit dark:text-gray-300",
-        className,
-      )}
-    >
-      <textarea
-        className="w-full h-full my-1 text-base resize-none overflow-x-hidden overflow-y-auto bg-transparent outline-none whitespace-pre-wrap word-break"
-        rows={1}
-        placeholder={placeholder}
-        ref={editorRef}
-        onPaste={onPaste}
-        onInput={handleEditorInput}
-      ></textarea>
-      <TagSuggestions editorRef={editorRef} editorActions={ref} />
+    <div className={classNames("flex flex-col justify-start items-start relative w-full h-auto bg-inherit dark:text-gray-300", className)}>
+      <BytemdEditor {...editConfig} />
+      <TagSuggestions editor={editor} />
     </div>
   );
 });

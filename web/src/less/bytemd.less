@@ -1,0 +1,34 @@
+@import "bytemd/dist/index.css";
+@import "codemirror/theme/3024-day.css";
+@import "codemirror/theme/3024-night.css";
+
+.bytemd {
+  @apply w-full dark:bg-zinc-800 border-gray-200 dark:border-zinc-700;
+  &-toolbar {
+    @apply bg-white dark:bg-zinc-800 dark:text-gray-300 border-gray-200 dark:border-zinc-700;
+    &-tab-active {
+      @apply text-blue-600 dark:text-blue-400;
+    }
+    &-icon {
+      &:hover {
+        @apply dark:bg-zinc-600;
+      }
+    }
+  }
+  &-preview {
+    @apply border-gray-200 dark:border-zinc-700 dark:bg-zinc-50;
+  }
+  &-status {
+    @apply dark:text-gray-300 border-gray-200 dark:border-zinc-700;
+    &-right {
+      span {
+        &:hover {
+          @apply text-blue-600 dark:text-blue-400;
+        }
+      }
+    }
+  }
+  &-fullscreen {
+    @apply z-10;
+  }
+}
